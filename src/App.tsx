@@ -41,6 +41,26 @@ interface BoreholeDetail {
   };
 }
 
+interface ImportRecord {
+  孔号: string;
+  深度段: string;
+  岩土描述: string;
+  N值: string;
+  含水状态?: string;
+  取样编号: string;
+}
+
+interface ValidatedRecord extends ImportRecord {
+  _errors: string[];
+  _valid: boolean;
+}
+
+type ImportState =
+  | { status: "idle" }
+  | { status: "parsing" }
+  | { status: "preview"; records: ValidatedRecord[]; fileName: string }
+  | { status: "error"; message: string };
+
 const boreholeDetails: Record<string, BoreholeDetail> = {
   "ZK-01": {
     holeId: "ZK-01",
@@ -391,18 +411,198 @@ function BoreholeDrawer({
   );
 }
 
+function ImportPreviewPanel({
+  importState,
+  onConfirm,
+  onCancel,
+}: {
+  importState: ImportState;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (importState.status === "idle") return null;
+
+  const isOpen = true;
+  const isPreview = importState.status === "preview";
+  const isError = importState.status === "error";
+  const isParsing = importState.status === "parsing";
+
+  const previewFields = ["孔号", "深度段", "岩土描述", "N值", "取样编号"];
+
+  const validCount = isPreview ? importState.records.filter((r) => r._valid).length : 0;
+  const invalidCount = isPreview ? importState.records.filter((r) => !r._valid).length : 0;
+
+  return (
+    <>
+      <div
+        className={"drawer-overlay " + (isOpen ? "show" : "")}
+        onClick={onCancel}
+      />
+      <aside className={"drawer import-drawer " + (isOpen ? "show" : "")}>
+        <div className="drawer-header">
+          <div>
+            <p className="drawer-eyebrow">数据导入</p>
+            <h2 className="drawer-title">导入钻孔记录</h2>
+            <p className="drawer-subtitle">
+              {isPreview && `文件：${importState.fileName}`}
+              {isParsing && "正在解析文件..."}
+              {isError && "解析错误"}
+            </p>
+          </div>
+          <button className="drawer-close" onClick={onCancel} aria-label="关闭">
+            ×
+          </button>
+        </div>
+
+        <div className="drawer-body">
+          {isParsing && (
+            <div className="import-loading">
+              <div className="loading-spinner"></div>
+              <p>正在解析JSON文件...</p>
+            </div>
+          )}
+
+          {isError && (
+            <section className="drawer-section">
+              <div className="import-error">
+                <div className="error-icon">!</div>
+                <h3>解析失败</h3>
+                <p>{importState.message}</p>
+                <div className="actions">
+                  <button className="primary" onClick={onCancel}>确定</button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {isPreview && (
+            <>
+              <section className="drawer-section">
+                <div className="import-summary">
+                  <div className="summary-item summary-valid">
+                    <span>有效记录</span>
+                    <strong>{validCount} 条</strong>
+                  </div>
+                  <div className="summary-item summary-invalid">
+                    <span>问题记录</span>
+                    <strong>{invalidCount} 条</strong>
+                  </div>
+                  <div className="summary-item summary-total">
+                    <span>总计</span>
+                    <strong>{importState.records.length} 条</strong>
+                  </div>
+                </div>
+                {invalidCount > 0 && (
+                  <p className="import-warning">
+                    ⚠️ 存在 {invalidCount} 条格式错误的记录，导入时将被自动忽略。请修正后重新导入。
+                  </p>
+                )}
+              </section>
+
+              <section className="drawer-section">
+                <h3 className="drawer-section-title">数据预览</h3>
+                <div className="import-table-wrapper">
+                  <table className="drawer-table import-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: "48px" }}>行号</th>
+                        {previewFields.map((field) => (
+                          <th key={field}>{field}</th>
+                        ))}
+                        <th>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importState.records.map((record, index) => (
+                        <tr
+                          key={index}
+                          className={!record._valid ? "row-error" : ""}
+                        >
+                          <td className="row-index">{index + 1}</td>
+                          <td>{record.孔号 || <span className="missing-field">—</span>}</td>
+                          <td>{record.深度段 || <span className="missing-field">—</span>}</td>
+                          <td>{record.岩土描述 || <span className="missing-field">—</span>}</td>
+                          <td>{record.N值 || <span className="missing-field">—</span>}</td>
+                          <td>{record.取样编号 || <span className="missing-field">—</span>}</td>
+                          <td>
+                            {record._valid ? (
+                              <span className="status-valid">✓ 正常</span>
+                            ) : (
+                              <div className="status-error">
+                                <span>✗ 错误</span>
+                                <div className="error-list">
+                                  {record._errors.map((err, i) => (
+                                    <div key={i}>• {err}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="drawer-section">
+                <h3 className="drawer-section-title">导入说明</h3>
+                <div className="import-instructions">
+                  <p>支持的JSON格式：</p>
+                  <pre>{`// 对象数组格式
+[
+  {
+    "孔号": "ZK-01",
+    "深度段": "0.0-3.8m",
+    "岩土描述": "杂填土夹碎石",
+    "N值": "4",
+    "含水状态": "稍湿",
+    "取样编号": "S01"
+  }
+]
+
+// 或二维数组格式（与导出格式一致）
+[
+  ["ZK-01", "0.0-3.8m", "杂填土夹碎石", "4", "稍湿", "S01"]
+]
+
+// 或包含records字段
+{ "records": [...] }`}</pre>
+                </div>
+              </section>
+
+              <div className="import-actions">
+                <button className="secondary" onClick={onCancel}>取消</button>
+                <button
+                  className="primary"
+                  onClick={onConfirm}
+                  disabled={validCount === 0}
+                >
+                  确认导入 {validCount > 0 && `(${validCount}条)`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+}
+
 export default function App() {
   const [filter, setFilter] = useState<string>(project.filters[0]);
   const [selected, setSelected] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerHoleId, setDrawerHoleId] = useState<string | null>(null);
   const [drawerDepth, setDrawerDepth] = useState<string | undefined>(undefined);
+  const [records, setRecords] = useState<readonly (readonly string[])[]>(project.records as readonly (readonly string[])[]);
+  const [importState, setImportState] = useState<ImportState>({ status: "idle" });
 
   const visibleRecords = useMemo(() => {
-    if (filter === project.filters[0]) return project.records;
-    return project.records.filter((row) => row.join(" ").includes(filter));
-  }, [filter]);
-  const rows = visibleRecords.length ? visibleRecords : project.records;
+    if (filter === project.filters[0]) return records;
+    return records.filter((row) => row.join(" ").includes(filter));
+  }, [filter, records]);
+  const rows = visibleRecords.length ? visibleRecords : records;
 
   const openDrawerFromRow = (row: readonly string[]) => {
     const holeId = row[0];
@@ -414,6 +614,130 @@ export default function App() {
 
   const closeDrawer = () => {
     setDrawerOpen(false);
+  };
+
+  const validateRecord = (record: ImportRecord, index: number): ValidatedRecord => {
+    const errors: string[] = [];
+
+    if (!record.孔号 || typeof record.孔号 !== "string" || record.孔号.trim() === "") {
+      errors.push("孔号不能为空");
+    }
+    if (!record.深度段 || typeof record.深度段 !== "string" || record.深度段.trim() === "") {
+      errors.push("深度段不能为空");
+    }
+    if (!record.岩土描述 || typeof record.岩土描述 !== "string" || record.岩土描述.trim() === "") {
+      errors.push("岩土描述不能为空");
+    }
+    if (record.N值 === undefined || record.N值 === null || record.N值 === "") {
+      errors.push("N值不能为空");
+    } else if (typeof record.N值 !== "string" && typeof record.N值 !== "number") {
+      errors.push("N值格式不正确");
+    }
+    if (!record.取样编号 || typeof record.取样编号 !== "string" || record.取样编号.trim() === "") {
+      errors.push("取样编号不能为空");
+    }
+
+    const depthRegex = /^\d+(\.\d+)?-\d+(\.\d+)?m?$/;
+    if (record.深度段 && !depthRegex.test(record.深度段.replace(/\s/g, ""))) {
+      errors.push("深度段格式应为\"0.0-3.8m\"");
+    }
+
+    return {
+      ...record,
+      N值: String(record.N值 ?? ""),
+      含水状态: record.含水状态 ?? "",
+      _errors: errors,
+      _valid: errors.length === 0,
+    };
+  };
+
+  const parseJsonFile = (file: File) => {
+    setImportState({ status: "parsing" });
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        let data = JSON.parse(content);
+
+        if (!Array.isArray(data)) {
+          if (data.records && Array.isArray(data.records)) {
+            data = data.records;
+          } else if (data.rows && Array.isArray(data.rows)) {
+            data = data.rows;
+          } else {
+            setImportState({ status: "error", message: "JSON格式错误：根节点应为数组，或包含records/rows字段" });
+            return;
+          }
+        }
+
+        if (data.length === 0) {
+          setImportState({ status: "error", message: "JSON文件为空数组" });
+          return;
+        }
+
+        const validated = data.map((item: unknown, index: number) => {
+          if (Array.isArray(item)) {
+            const record: ImportRecord = {
+              孔号: String(item[0] ?? ""),
+              深度段: String(item[1] ?? ""),
+              岩土描述: String(item[2] ?? ""),
+              N值: String(item[3] ?? ""),
+              含水状态: String(item[4] ?? ""),
+              取样编号: String(item[5] ?? ""),
+            };
+            return validateRecord(record, index);
+          } else if (typeof item === "object" && item !== null) {
+            return validateRecord(item as ImportRecord, index);
+          } else {
+            return {
+              孔号: "",
+              深度段: "",
+              岩土描述: "",
+              N值: "",
+              含水状态: "",
+              取样编号: "",
+              _errors: [`第${index + 1}行数据格式不正确`],
+              _valid: false,
+            } as ValidatedRecord;
+          }
+        });
+
+        setImportState({ status: "preview", records: validated, fileName: file.name });
+      } catch (err) {
+        setImportState({ status: "error", message: `JSON解析失败：${(err as Error).message}` });
+      }
+    };
+
+    reader.onerror = () => {
+      setImportState({ status: "error", message: "文件读取失败" });
+    };
+
+    reader.readAsText(file);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      parseJsonFile(file);
+    }
+    e.target.value = "";
+  };
+
+  const confirmImport = () => {
+    if (importState.status !== "preview") return;
+
+    const validRecords = importState.records
+      .filter((r) => r._valid)
+      .map((r) => [r.孔号, r.深度段, r.岩土描述, r.N值, r.含水状态 || "", r.取样编号] as readonly string[]);
+
+    setRecords(validRecords);
+    setImportState({ status: "idle" });
+    setSelected(0);
+  };
+
+  const cancelImport = () => {
+    setImportState({ status: "idle" });
   };
 
   return (
@@ -524,6 +848,18 @@ export default function App() {
               <button className="primary">保存记录</button>
               <button className="secondary">导出JSON</button>
             </div>
+            <div className="import-section">
+              <label className="import-label">
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleFileSelect}
+                  style={{ display: "none" }}
+                />
+                <span className="import-btn">📥 导入JSON</span>
+              </label>
+              <p className="mini-note">选择本地JSON文件，预览并导入钻孔记录数据。</p>
+            </div>
           </section>
         </aside>
       </section>
@@ -533,6 +869,12 @@ export default function App() {
         onClose={closeDrawer}
         holeId={drawerHoleId}
         highlightDepth={drawerDepth}
+      />
+
+      <ImportPreviewPanel
+        importState={importState}
+        onConfirm={confirmImport}
+        onCancel={cancelImport}
       />
     </main>
   );
