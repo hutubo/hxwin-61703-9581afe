@@ -61,6 +61,19 @@ type ImportState =
   | { status: "preview"; records: ValidatedRecord[]; fileName: string }
   | { status: "error"; message: string };
 
+interface QuickEntryRecord {
+  id: string;
+  孔号: string;
+  取样深度: string;
+  标贯击数: string;
+  岩土层描述: string;
+  备注: string;
+  createdAt: number;
+}
+
+const QUICK_ENTRY_STORAGE_KEY = "hxwin_quick_entry_history";
+const MAX_HISTORY_RECORDS = 20;
+
 const boreholeDetails: Record<string, BoreholeDetail> = {
   "ZK-01": {
     holeId: "ZK-01",
@@ -589,6 +602,139 @@ function ImportPreviewPanel({
   );
 }
 
+function QuickEntryHistoryPanel({
+  open,
+  onClose,
+  history,
+  onFillRecord,
+  onClearHistory,
+  onDeleteRecord,
+  formatDateTime,
+}: {
+  open: boolean;
+  onClose: () => void;
+  history: QuickEntryRecord[];
+  onFillRecord: (record: QuickEntryRecord) => void;
+  onClearHistory: () => void;
+  onDeleteRecord: (id: string, e: React.MouseEvent) => void;
+  formatDateTime: (timestamp: number) => string;
+}) {
+  return (
+    <>
+      <div
+        className={"drawer-overlay " + (open ? "show" : "")}
+        onClick={onClose}
+      />
+      <aside className={"drawer history-drawer " + (open ? "show" : "")}>
+        <div className="drawer-header">
+          <div>
+            <p className="drawer-eyebrow">录入历史</p>
+            <h2 className="drawer-title">快速录入历史</h2>
+            <p className="drawer-subtitle">
+              共 {history.length} 条记录，最近录入的显示在最前面
+            </p>
+          </div>
+          <button className="drawer-close" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+
+        <div className="drawer-body">
+          <section className="drawer-section">
+            <div className="history-actions">
+              <button
+                className="secondary"
+                onClick={onClearHistory}
+                disabled={history.length === 0}
+              >
+                🗑️ 清空历史
+              </button>
+              <p className="mini-note">点击记录可一键回填到表单继续编辑</p>
+            </div>
+          </section>
+
+          {history.length === 0 ? (
+            <div className="history-empty">
+              <div className="empty-icon">📝</div>
+              <h3>暂无历史记录</h3>
+              <p>提交快速录入表单后，记录将保存在这里</p>
+            </div>
+          ) : (
+            <div className="history-list">
+              {history.map((record) => (
+                <div
+                  key={record.id}
+                  className="history-card"
+                  onClick={() => onFillRecord(record)}
+                >
+                  <div className="history-card-header">
+                    <div className="history-card-title">
+                      <span className="history-hole-id">{record.孔号 || "未填写孔号"}</span>
+                      <span className="history-time">{formatDateTime(record.createdAt)}</span>
+                    </div>
+                    <button
+                      className="history-delete-btn"
+                      onClick={(e) => onDeleteRecord(record.id, e)}
+                      title="删除此记录"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="history-card-body">
+                    <div className="history-fields">
+                      <div className="history-field">
+                        <span className="field-label">取样深度</span>
+                        <span className="field-value">{record.取样深度 || "—"}</span>
+                      </div>
+                      <div className="history-field">
+                        <span className="field-label">标贯击数</span>
+                        <span className="field-value">{record.标贯击数 || "—"}</span>
+                      </div>
+                      <div className="history-field">
+                        <span className="field-label">岩土层描述</span>
+                        <span className="field-value">{record.岩土层描述 || "—"}</span>
+                      </div>
+                    </div>
+                    {record.备注 && (
+                      <div className="history-remark">
+                        <span className="field-label">备注</span>
+                        <p>{record.备注}</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="history-card-footer">
+                    <span className="fill-hint">点击回填 →</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+}
+
+const loadHistoryFromStorage = (): QuickEntryRecord[] => {
+  try {
+    const stored = localStorage.getItem(QUICK_ENTRY_STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error("Failed to load quick entry history:", e);
+  }
+  return [];
+};
+
+const saveHistoryToStorage = (history: QuickEntryRecord[]) => {
+  try {
+    localStorage.setItem(QUICK_ENTRY_STORAGE_KEY, JSON.stringify(history));
+  } catch (e) {
+    console.error("Failed to save quick entry history:", e);
+  }
+};
+
 export default function App() {
   const [filter, setFilter] = useState<string>(project.filters[0]);
   const [selected, setSelected] = useState(0);
@@ -597,6 +743,16 @@ export default function App() {
   const [drawerDepth, setDrawerDepth] = useState<string | undefined>(undefined);
   const [records, setRecords] = useState<readonly (readonly string[])[]>(project.records as readonly (readonly string[])[]);
   const [importState, setImportState] = useState<ImportState>({ status: "idle" });
+
+  const [quickForm, setQuickForm] = useState({
+    孔号: "",
+    取样深度: "",
+    标贯击数: "",
+    岩土层描述: "",
+    备注: "",
+  });
+  const [quickEntryHistory, setQuickEntryHistory] = useState<QuickEntryRecord[]>(loadHistoryFromStorage);
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
 
   const visibleRecords = useMemo(() => {
     if (filter === project.filters[0]) return records;
@@ -740,6 +896,72 @@ export default function App() {
     setImportState({ status: "idle" });
   };
 
+  const handleQuickFormChange = (field: keyof typeof quickForm, value: string) => {
+    setQuickForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleQuickFormSubmit = () => {
+    const hasContent = Object.values(quickForm).some((v) => v.trim() !== "");
+    if (!hasContent) return;
+
+    const newRecord: QuickEntryRecord = {
+      id: Date.now().toString(),
+      孔号: quickForm.孔号,
+      取样深度: quickForm.取样深度,
+      标贯击数: quickForm.标贯击数,
+      岩土层描述: quickForm.岩土层描述,
+      备注: quickForm.备注,
+      createdAt: Date.now(),
+    };
+
+    const updatedHistory = [newRecord, ...quickEntryHistory].slice(0, MAX_HISTORY_RECORDS);
+    setQuickEntryHistory(updatedHistory);
+    saveHistoryToStorage(updatedHistory);
+
+    setQuickForm({
+      孔号: "",
+      取样深度: "",
+      标贯击数: "",
+      岩土层描述: "",
+      备注: "",
+    });
+  };
+
+  const handleFillRecord = (record: QuickEntryRecord) => {
+    setQuickForm({
+      孔号: record.孔号,
+      取样深度: record.取样深度,
+      标贯击数: record.标贯击数,
+      岩土层描述: record.岩土层描述,
+      备注: record.备注,
+    });
+    setHistoryPanelOpen(false);
+  };
+
+  const handleClearHistory = () => {
+    if (quickEntryHistory.length === 0) return;
+    if (window.confirm("确定要清空所有历史记录吗？此操作不可撤销。")) {
+      setQuickEntryHistory([]);
+      saveHistoryToStorage([]);
+    }
+  };
+
+  const handleDeleteRecord = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedHistory = quickEntryHistory.filter((r) => r.id !== id);
+    setQuickEntryHistory(updatedHistory);
+    saveHistoryToStorage(updatedHistory);
+  };
+
+  const formatDateTime = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${month}-${day} ${hours}:${minutes}`;
+  };
+
   return (
     <main className="app-shell" style={{ "--accent": project.accent } as CSSProperties}>
       <header className="topbar">
@@ -837,15 +1059,38 @@ export default function App() {
           </section>
 
           <section className="panel">
-            <h2>快速录入</h2>
+            <div className="panel-header">
+              <h2>快速录入</h2>
+              <button
+                className="history-toggle-btn"
+                onClick={() => setHistoryPanelOpen(true)}
+                title="查看历史记录"
+              >
+                📋 历史
+                {quickEntryHistory.length > 0 && (
+                  <span className="history-badge">{quickEntryHistory.length}</span>
+                )}
+              </button>
+            </div>
             <div className="form-grid">
               {project.form.map((field) => (
-                <label key={field}>{field}<input placeholder={"填写" + field} /></label>
+                <label key={field}>
+                  {field}
+                  <input
+                    placeholder={"填写" + field}
+                    value={quickForm[field as keyof typeof quickForm]}
+                    onChange={(e) => handleQuickFormChange(field as keyof typeof quickForm, e.target.value)}
+                  />
+                </label>
               ))}
-              <textarea placeholder="补充专业备注" />
+              <textarea
+                placeholder="补充专业备注"
+                value={quickForm.备注}
+                onChange={(e) => handleQuickFormChange("备注", e.target.value)}
+              />
             </div>
             <div className="actions">
-              <button className="primary">保存记录</button>
+              <button className="primary" onClick={handleQuickFormSubmit}>保存记录</button>
               <button className="secondary">导出JSON</button>
             </div>
             <div className="import-section">
@@ -875,6 +1120,16 @@ export default function App() {
         importState={importState}
         onConfirm={confirmImport}
         onCancel={cancelImport}
+      />
+
+      <QuickEntryHistoryPanel
+        open={historyPanelOpen}
+        onClose={() => setHistoryPanelOpen(false)}
+        history={quickEntryHistory}
+        onFillRecord={handleFillRecord}
+        onClearHistory={handleClearHistory}
+        onDeleteRecord={handleDeleteRecord}
+        formatDateTime={formatDateTime}
       />
     </main>
   );
